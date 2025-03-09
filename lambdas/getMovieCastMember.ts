@@ -15,69 +15,82 @@ const isValidQueryParams = ajv.compile(
 );
  
 const ddbDocClient = createDocumentClient();
-
 export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
-  try {
-    console.log("[EVENT]", JSON.stringify(event));
-    const queryParams = event.queryStringParameters;
-    if (!queryParams) {
-      return {
-        statusCode: 500,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ message: "Missing query parameters" }),
+    try {
+      console.log("[EVENT]", JSON.stringify(event));
+      const queryParams = event.queryStringParameters;
+      if (!queryParams) {
+        return {
+          statusCode: 500,
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ message: "Missing query parameters" }),
+        };
+      }
+      
+   
+      if (!isValidQueryParams(queryParams)) {
+        return {
+          statusCode: 500,
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            message: `Incorrect type. Must match Query parameters schema`,
+            schema: schema.definitions["MovieCastMemberQueryParams"],
+          }),
+        };
+      }
+      
+      const movieId = parseInt(queryParams.movieId);
+      let commandInput: QueryCommandInput = {
+        TableName: process.env.TABLE_NAME,
       };
-    }
-    if (!isValidQueryParams(queryParams)) {
-      return {
-        statusCode: 500,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          message: `Incorrect type. Must match Query parameters schema`,
-          schema: schema.definitions["MovieCastMemberQueryParams"],
-        }),
-      };
-    }
+      
     
-    const movieId = parseInt(queryParams.movieId);
-    let commandInput: QueryCommandInput = {
-      TableName: process.env.TABLE_NAME,
-    };
-    if ("roleName" in queryParams) {
-      commandInput = {
-        ...commandInput,
-        IndexName: "roleIx",
-        KeyConditionExpression: "movieId = :m and begins_with(roleName, :r) ",
-        ExpressionAttributeValues: {
-          ":m": movieId,
-          ":r": queryParams.roleName,
-        },
-      };
-    } else if ("actorName" in queryParams) {
-      commandInput = {
-        ...commandInput,
-        KeyConditionExpression: "movieId = :m and begins_with(actorName, :a) ",
-        ExpressionAttributeValues: {
-          ":m": movieId,
-          ":a": queryParams.actorName,
-        },
-      };
-    } else {
-      commandInput = {
-        ...commandInput,
-        KeyConditionExpression: "movieId = :m",
-        ExpressionAttributeValues: {
-          ":m": movieId,
-        },
-      };
-    }
-    
-    const commandOutput = await ddbDocClient.send(
-      new QueryCommand(commandInput)
-      );
+      if ("roleName" in queryParams) {
+        commandInput = {
+          ...commandInput,
+          IndexName: "roleIx",
+          KeyConditionExpression: "movieId = :m and begins_with(roleName, :r) ",
+          ExpressionAttributeValues: {
+            ":m": movieId,
+            ":r": queryParams.roleName,
+          },
+        };
+      } else if ("actorName" in queryParams) {
+        commandInput = {
+          ...commandInput,
+          KeyConditionExpression: "movieId = :m and begins_with(actorName, :a) ",
+          ExpressionAttributeValues: {
+            ":m": movieId,
+            ":a": queryParams.actorName,
+          },
+        };
+      } else {
+        commandInput = {
+          ...commandInput,
+          KeyConditionExpression: "movieId = :m",
+          ExpressionAttributeValues: {
+            ":m": movieId,
+          },
+        };
+      }
+  
+   
+      let movieCast = [];
+      if (queryParams.cast === "true") {
+        const castCommandOutput = await ddbDocClient.send(new QueryCommand({
+          TableName: process.env.TABLE_NAME,
+          KeyConditionExpression: "movieId = :m",
+          ExpressionAttributeValues: { ":m": movieId },
+        }));
+        movieCast = castCommandOutput.Items;
+      }
+      
+
+      const commandOutput = await ddbDocClient.send(new QueryCommand(commandInput));
       
       return {
         statusCode: 200,
@@ -86,6 +99,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
         },
         body: JSON.stringify({
           data: commandOutput.Items,
+          cast: movieCast, 
         }),
       };
     } catch (error: any) {
@@ -100,6 +114,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
     }
   };
   
+  
   function createDocumentClient() {
     const ddbClient = new DynamoDBClient({ region: process.env.REGION });
     const marshallOptions = {
@@ -107,9 +122,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
       removeUndefinedValues: true,
       convertClassInstanceToMap: true,
     };
-    const unmarshallOptions = {
-    wrapNumbers: false,
-  };
-  const translateConfig = { marshallOptions, unmarshallOptions };
-  return DynamoDBDocumentClient.from(ddbClient, translateConfig);
-}
+    const unmarshallOptions = { wrapNumbers: false };
+    const translateConfig = { marshallOptions, unmarshallOptions };
+    return DynamoDBDocumentClient.from(ddbClient, translateConfig);
+  }
+  
